@@ -3,7 +3,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { existsSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
+import { homedir } from "node:os";
+import { DesignTasks } from "./designTasks.js";
+import { registerDesignTools } from "./designTools.js";
 import { z } from "zod";
 import { AppServerClient } from "./appServer.js";
 import { buildAppServerArgs, buildCodexEnv, readConfiguredMcpServerNames } from "./codexLaunch.js";
@@ -37,6 +40,9 @@ const client = new AppServerClient({
 const imagegen = new ImagegenService(client);
 
 const server = new McpServer({ name: "codex-imagegen", version: VERSION });
+const designClient = new AppServerClient({ command: config.codexBin, args: buildAppServerArgs(readConfiguredMcpServerNames()), env: buildCodexEnv(), clientVersion: VERSION, log });
+const designTasks = new DesignTasks(designClient, process.env.CODEX_DESIGN_STATE_DIR || join(homedir(), ".cache", "codex-imagegen-mcp", "tasks"), config.model);
+registerDesignTools(server, designTasks);
 
 const effortSchema = z.enum(["low", "medium", "high"]).optional()
   .describe("Codex reasoning effort for writing the image prompt. Default low; raise it for dense UI or text-heavy images.");
@@ -124,7 +130,7 @@ server.registerTool(
     description: [
       "Generate one or more raster images with Codex's built-in image generation (billed to the signed-in ChatGPT plan, no API key).",
       "Each image takes roughly 20-90s. Use `variations` for distinct design directions (one image each, run in parallel), or `count` for repeats of the same brief.",
-      "For UI mockups write a structured brief, e.g.:",
+      "This is a single-shot worker, without repository research or self-review. For product UI use design_task_start. For prepared mockup briefs, e.g.:",
       "Use case: ui-mockup / Asset type: web app screen 1440x900 / Primary request: ... / Layout: sections in order / Text (verbatim): \"...\" / Style: ... / Constraints: realistic product UI, legible text, no logos, no watermark.",
       "Returns saved file paths plus inline previews.",
     ].join("\n"),
@@ -234,6 +240,7 @@ server.registerTool(
 );
 
 const shutdown = async () => {
+  await designTasks.close();
   await client.close();
   process.exit(0);
 };
